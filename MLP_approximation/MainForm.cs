@@ -1,4 +1,5 @@
-﻿using AForge.Neuro;
+﻿using System.Runtime.Serialization.Formatters.Binary;
+using AForge.Neuro;
 using AForge.Neuro.Learning;
 using System;
 using System.Collections.Generic;
@@ -23,8 +24,9 @@ namespace MLP_approximation
         private double[] factors;
         private ActivationNetwork network;
         private List<int> neuronsInLayers;
+        private List<double> trainingSetError;
         private string transferFunction;
-
+        private BackPropagationLearning teacher;
         private Thread workerThread;
         private bool needToStop;
         private readonly string _dir = Directory.GetCurrentDirectory();
@@ -170,11 +172,11 @@ namespace MLP_approximation
                 numberOfInputs,
                 dynamicAdding ? new[] { 1, neuronsInLayers[1] } : neuronsInLayers.ToArray());
 
-            var teacher = new BackPropagationLearning(network) { LearningRate = learningRate, Momentum = momentum };
+            teacher = new BackPropagationLearning(network) { LearningRate = learningRate, Momentum = momentum };
 
             var iteration = 1;
 
-            var trainingSetError = new double[iterations];
+            trainingSetError = new List<double>();
 
             //////////////////////////////////////////////////////////////////////////////////////////////////////////
             var periods = PeriodicAdd(gamma);
@@ -182,8 +184,8 @@ namespace MLP_approximation
             {
                 if (dynamicAdding && periods.Contains(iteration))
                     ((ActivationLayer)network.Layers[0]).AddNeuron(network);
-                var error = teacher.RunEpoch(input, output);
-                trainingSetError[iteration - 1] = error;
+                var error = teacher.RunEpoch(input, output) / samples;
+                trainingSetError.Add(error);
                 iteration++;
                 if (((iterations == 0) || (iteration <= iterations)) && !(error < eps)) continue;
                 elapsedIterations = iteration - 1;
@@ -191,9 +193,11 @@ namespace MLP_approximation
             }
             //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+            if (dynamicPruning) Pruning(input, output);
+
             TextWriter twError = new StreamWriter(_dir + "\\classification_error.csv");
             var nfi = new NumberFormatInfo { NumberDecimalSeparator = "." };
-            for (var i = 0; i < iterations; i++)
+            for (var i = 0; i < trainingSetError.Count; i++)
             {
                 twError.WriteLine(i + "," + trainingSetError[i].ToString(nfi));
             }
@@ -319,8 +323,7 @@ namespace MLP_approximation
 
             // create a writer and open the file
             TextWriter twSolution = new StreamWriter(_dir + "\\classification_output.csv");
-            NumberFormatInfo nfi = new NumberFormatInfo();
-            nfi.NumberDecimalSeparator = ".";
+            var nfi = new NumberFormatInfo { NumberDecimalSeparator = "." };
             for (int sample = 0; sample < samples; sample++)
             {
                 for (int i = 0; i < numberOfInputs; i++)
@@ -334,6 +337,7 @@ namespace MLP_approximation
             network.Save(_dir + "\\network");
             MessageBox.Show("Tested");
         }
+
         private List<int> PeriodicAdd(int gamma)
         {
             var periods = new List<int> { 0 };
@@ -348,14 +352,65 @@ namespace MLP_approximation
         {
             dynamicPruning = ((CheckBox)sender).Checked;
         }
+
         private void CheckBox1CheckedChanged(object sender, EventArgs e)
         {
             dynamicAdding = ((CheckBox)sender).Checked;
         }
 
-        private void Pruning()
+        private void Pruning(double[][] input, double[][] output)
         {
-            
+            var samples = input.Length;
+            var keepPruning = true;
+            Network checkpoint = null;
+            var pruned = 0;
+            while (keepPruning)
+            {
+                var trainError = trainingSetError.Last();
+                using (var clonestream = new MemoryStream())
+                {
+                    var formatter = new BinaryFormatter();
+                    formatter.Serialize(clonestream, network);
+                    clonestream.Position = 0;
+                    checkpoint = (Network)formatter.Deserialize(clonestream);
+
+                    var min = network.Layers.SelectMany(x => x.neurons).SelectMany(x => x.weights).Select(Math.Abs).Max();
+                    var minpos = new[] { 0, 0, 0 };
+                    for (var i = 0; i < network.Layers.Length; i++)
+                    {
+                        var layer = network.Layers[i];
+                        for (var j = 0; j < layer.neurons.Length; j++)
+                        {
+                            var neuron = layer.neurons[j];
+                            for (var k = 0; k < neuron.weights.Length; k++)
+                            {
+                                var weight = neuron.weights[k];
+                                if (neuron.freezes[k] == 0 || Math.Abs(min) < Math.Abs(weight)) continue;
+                                min = weight;
+                                minpos = new[] { i, j, k };
+                            }
+                        }
+                    }
+                    var minneuron = network.Layers[minpos[0]].neurons[minpos[1]];
+                    minneuron.Freeze(minpos[2]);
+                    var iteration = 1;
+                    var trainingSetErrorPrune = new List<double>();
+                    while (!needToStop)
+                    {
+                        var error = teacher.RunEpoch(input, output) / samples;
+                        trainingSetErrorPrune.Add(error);
+                        iteration++;
+                        if ((iteration < iterations / 10) && (error > trainError)) continue;
+                        trainingSetError.AddRange(trainingSetErrorPrune);
+                        pruned++;
+                        if (iteration >= iterations / 10 && error > trainError)
+                            keepPruning = false;
+                        break;
+                    }
+                }
+            }
+            MessageBox.Show("Pruned" + pruned + " connections");
+            network = (ActivationNetwork)checkpoint;
         }
     }
 }

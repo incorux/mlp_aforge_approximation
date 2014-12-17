@@ -49,7 +49,7 @@
     </Reference>
     <Reference Include="AForge.Neuro, Version=2.2.5.0, Culture=neutral, PublicKeyToken=2094f4ea39731d4f, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\Documents\Visual Studio 2013\Projects\AForge.NET Framework-2.2.5\Sources\Neuro\obj\Debug\AForge.Neuro.dll</HintPath>
+      <HintPath>..\AForge.Neuro.dll</HintPath>
     </Reference>
     <Reference Include="AForge.Video">
       <HintPath>..\packages\AForge.Video.2.2.5\lib\AForge.Video.dll</HintPath>
