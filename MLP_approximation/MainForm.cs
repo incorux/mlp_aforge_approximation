@@ -1,0 +1,361 @@
+﻿using AForge.Neuro;
+using AForge.Neuro.Learning;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace MLP_approximation
+{
+    public partial class MainForm : Form
+    {
+        private double learningRate;
+        private double momentum;
+        private double sigmoidAlphaValue = 2.0;
+        private int iterations;
+        private double[,] trainData;
+        private double[,] testData;
+        private float[] mins;
+        private float[] maxes;
+        private double[] factors;
+        private ActivationNetwork network;
+        private List<int> neuronsInLayers;
+        private string transferFunction;
+
+        private Thread workerThread;
+        private bool needToStop;
+        private readonly string _dir = Directory.GetCurrentDirectory();
+        private NumberStyles style = NumberStyles.Number;
+        private CultureInfo culture = CultureInfo.InvariantCulture;
+        private int numberOfInputs, numberOfOutputs, gamma, elapsedIterations;
+        private bool dynamicAdding, dynamicPruning;
+        private float eps;
+        public MainForm()
+        {
+            InitializeComponent();
+        }
+
+        private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            // check if worker thread is running
+            if ((workerThread == null) || (!workerThread.IsAlive)) return;
+            needToStop = true;
+            workerThread.Join();
+        }
+
+        private void loadTrainingDataButton_Click(object sender, EventArgs e)
+        {
+            if (openFileDialogTrain.ShowDialog() != DialogResult.OK) return;
+            StreamReader reader = null;
+
+            try
+            {
+                reader = File.OpenText(openFileDialogTrain.FileName);
+                string str;
+                var row = 0;
+                numberOfInputs = reader.ReadLine().Split(',').Length - 1;
+                factors = new double[numberOfInputs + 1];
+                reader.BaseStream.Position = 0;
+                reader.DiscardBufferedData();
+
+                // read maximum 20000 points
+                var tempData = new float[20000, numberOfInputs + 1];
+                // prepare mins and maxes
+                mins = new float[numberOfInputs + 1];
+                mins.Populate(float.MaxValue);
+                maxes = new float[numberOfInputs + 1];
+                maxes.Populate(float.MinValue);
+
+                // read the data
+                while ((row < 20000) && ((str = reader.ReadLine()) != null))
+                {
+                    var strs = str.Split(',');
+
+                    // parse first input
+                    if (!float.TryParse(strs[0], style, culture, out tempData[row, 0])) continue;
+                    // parse the rest of inputs and output
+                    for (int input = 1; input <= numberOfInputs; input++)
+                    {
+                        tempData[row, input] = float.Parse(strs[input], culture);
+                    }
+
+                    // search for mins and maxes
+                    for (int input = 0; input <= numberOfInputs; input++)
+                    {
+                        if (tempData[row, input] < mins[input])
+                            mins[input] = tempData[row, input];
+                        if (tempData[row, input] > maxes[input])
+                            maxes[input] = tempData[row, input];
+                    }
+                    row++;
+                }
+
+                // allocate and set data
+                trainData = new double[row, numberOfInputs + 1];
+                Array.Copy(tempData, 0, trainData, 0, row * (numberOfInputs + 1));
+                MessageBox.Show("Training data loaded");
+            }
+            catch (Exception)
+            {
+                MessageBox.Show("Failed reading the file", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            finally
+            {
+                if (reader != null)
+                    reader.Close();
+            }
+
+            startButton.Enabled = true;
+        }
+
+        private void trainButton_Click(object sender, EventArgs e)
+        {
+            learningRate = (double)learningRateBox.Value;
+            momentum = (double)momentumBox.Value;
+            // add hidden layers
+            var neuronsStrings = neuronsBox.Text.Split(' ');
+            neuronsInLayers = new List<int>(neuronsStrings.Length);
+            foreach (String neuronString in neuronsStrings)
+            {
+                neuronsInLayers.Add(Int32.Parse(neuronString));
+            }
+            // add output neurons
+            numberOfOutputs = (int)outputNumericUpDown.Value;
+            neuronsInLayers.Add(numberOfOutputs);
+            iterations = (int)iterationsBox.Value;
+            sigmoidAlphaValue = (double)sigmaNumericUpDown.Value;
+            eps = (float)epsNumeric.Value;
+            gamma = (int)gammaNumeric.Value;
+            // run worker thread
+            needToStop = false;
+            workerThread = new Thread(SearchSolution);
+            workerThread.Start();
+            workerThread.Join();
+            MessageBox.Show("Network trained, iterations:" + elapsedIterations);
+            loadTestDataButton.Enabled = true;
+        }
+
+        // Worker thread
+        void SearchSolution()
+        {
+            // number of learning samples
+            var samples = trainData.GetLength(0);
+            // data normalization factors
+            const int numerator = 2;
+            for (var i = 0; i <= numberOfInputs; i++)
+            {
+                factors[i] = numerator / (maxes[i] - mins[i]);
+            }
+
+            var input = new double[samples][];
+            var output = new double[samples][];
+
+            for (var sample = 0; sample < samples; sample++)
+            {
+                input[sample] = new double[numberOfInputs];
+                output[sample] = new double[numberOfOutputs];
+                for (var i = 0; i < numberOfInputs; i++)
+                {
+                    input[sample][i] = normalizeInput(trainData[sample, i], i);
+                }
+                output[sample] = normalizeOutput(sample);
+            }
+
+            network = new ActivationNetwork(
+                new BipolarSigmoidFunction(sigmoidAlphaValue),
+                numberOfInputs,
+                dynamicAdding ? new[] { 1, neuronsInLayers[1] } : neuronsInLayers.ToArray());
+
+            var teacher = new BackPropagationLearning(network) { LearningRate = learningRate, Momentum = momentum };
+
+            var iteration = 1;
+
+            var trainingSetError = new double[iterations];
+
+            //////////////////////////////////////////////////////////////////////////////////////////////////////////
+            var periods = PeriodicAdd(gamma);
+            while (!needToStop)
+            {
+                if (dynamicAdding && periods.Contains(iteration))
+                    ((ActivationLayer)network.Layers[0]).AddNeuron(network);
+                var error = teacher.RunEpoch(input, output);
+                trainingSetError[iteration - 1] = error;
+                iteration++;
+                if (((iterations == 0) || (iteration <= iterations)) && !(error < eps)) continue;
+                elapsedIterations = iteration - 1;
+                break;
+            }
+            //////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+            TextWriter twError = new StreamWriter(_dir + "\\classification_error.csv");
+            var nfi = new NumberFormatInfo { NumberDecimalSeparator = "." };
+            for (var i = 0; i < iterations; i++)
+            {
+                twError.WriteLine(i + "," + trainingSetError[i].ToString(nfi));
+            }
+            twError.Close();
+        }
+
+        private double denormalize(double[] output)
+        {
+            if (output.Length > 1)
+            {
+                return output.ToList().IndexOf(output.Max()) + 1;
+            }
+            else
+            {
+                int add = (transferFunction == "bipolar") ? 1 : 0;
+                return (output[0] + add) / factors[factors.Length - 1] + mins[mins.Length - 1];
+            }
+        }
+
+        private double[] normalizeOutput(int sample)
+        {
+            if (numberOfOutputs == 1)
+            {
+                return new double[] { normalizeInput(trainData[sample, numberOfInputs], numberOfInputs) };
+            }
+            else
+            {
+                double[] result = new double[numberOfOutputs];
+                int low = (transferFunction == "bipolar") ? -1 : 0;
+                Populator.Populate<double>(result, low);
+                int cls = (int)trainData[sample, numberOfInputs];
+                result[cls - 1] = 1;
+                return result;
+            }
+        }
+
+        private double normalizeInput(double value, int inputIndex)
+        {
+            if (transferFunction == "bipolar")
+            {
+                return (value - mins[inputIndex]) * factors[inputIndex] - 1.0;
+            }
+            else
+            {
+                return (value - mins[inputIndex]) * factors[inputIndex];
+            }
+        }
+
+        private void loadTestDataButton_Click(object sender, EventArgs e)
+        {
+            if (openFileDialogTest.ShowDialog() != DialogResult.OK) return;
+            StreamReader reader = null;
+            // read maximum 20000 points
+            float[,] tempData = new float[20000, numberOfInputs];
+
+            try
+            {
+                reader = File.OpenText(openFileDialogTest.FileName);
+                string str;
+                int samples = 0;
+
+                // read the data
+                while ((samples < 20000) && ((str = reader.ReadLine()) != null))
+                {
+                    var strs = str.Split(',');
+                    // parse 1st input and skip header if necessary
+                    if (!float.TryParse(strs[0], style, culture, out tempData[samples, 0])) continue;
+                    for (int input = 1; input < numberOfInputs; input++)
+                    {
+                        tempData[samples, input] = float.Parse(strs[input], culture);
+                    }
+                    samples++;
+                }
+
+                // allocate and set data
+                testData = new double[samples, numberOfInputs];
+                Array.Copy(tempData, 0, testData, 0, samples * numberOfInputs);
+                MessageBox.Show("Test data loaded");
+            }
+            catch (Exception)
+            {
+                MessageBox.Show("Failed reading the file", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+            finally
+            {
+                if (reader != null)
+                    reader.Close();
+            }
+            testButton.Enabled = true;
+        }
+
+        private void testButton_Click(object sender, EventArgs e)
+        {
+            // number of learning samples
+            int samples = testData.GetLength(0);
+
+            var input = new double[samples][];
+
+            for (int sample = 0; sample < samples; sample++)
+            {
+                input[sample] = new double[numberOfInputs];
+                for (int i = 0; i < numberOfInputs; i++)
+                {
+                    input[sample][i] = normalizeInput(testData[sample, i], i);
+                }
+            }
+
+            var solution = new double[samples, numberOfInputs + 1];
+
+            // calculate solution
+            for (int sample = 0; sample < samples; sample++)
+            {
+                // copy inputs
+                for (int i = 0; i < numberOfInputs; i++)
+                {
+                    solution[sample, i] = testData[sample, i];
+                }
+
+                // denormalize
+                solution[sample, numberOfInputs] = denormalize(network.Compute(input[sample]));
+            }
+
+            // create a writer and open the file
+            TextWriter twSolution = new StreamWriter(_dir + "\\classification_output.csv");
+            NumberFormatInfo nfi = new NumberFormatInfo();
+            nfi.NumberDecimalSeparator = ".";
+            for (int sample = 0; sample < samples; sample++)
+            {
+                for (int i = 0; i < numberOfInputs; i++)
+                {
+                    twSolution.Write(solution[sample, i].ToString(nfi) + ",");
+                }
+                twSolution.Write(solution[sample, numberOfInputs].ToString(nfi));
+                twSolution.WriteLine();
+            }
+            twSolution.Close();
+            network.Save(_dir + "\\network");
+            MessageBox.Show("Tested");
+        }
+        private List<int> PeriodicAdd(int gamma)
+        {
+            var periods = new List<int> { 0 };
+            for (var i = 1; periods.Last() < iterations; i++)
+            {
+                periods.Add((int)Math.Pow(gamma + 1, i - 1));
+            }
+            return periods;
+        }
+
+        private void CheckBox2CheckedChanged(object sender, EventArgs e)
+        {
+            dynamicPruning = ((CheckBox)sender).Checked;
+        }
+        private void CheckBox1CheckedChanged(object sender, EventArgs e)
+        {
+            dynamicAdding = ((CheckBox)sender).Checked;
+        }
+
+        private void Pruning()
+        {
+            
+        }
+    }
+}
