@@ -32,7 +32,7 @@ namespace MLP_approximation
         private readonly string _dir = Directory.GetCurrentDirectory();
         private NumberStyles style = NumberStyles.Number;
         private CultureInfo culture = CultureInfo.InvariantCulture;
-        private int numberOfInputs, numberOfOutputs, gamma, elapsedIterations;
+        private int numberOfInputs, numberOfOutputs, gamma, elapsedIterations, totalConnections;
         private bool dynamicAdding, dynamicPruning;
         private float eps;
         public MainForm()
@@ -171,7 +171,7 @@ namespace MLP_approximation
             network = new ActivationNetwork(
                 new BipolarSigmoidFunction(sigmoidAlphaValue),
                 numberOfInputs,
-                dynamicAdding ? new[] { 1, neuronsInLayers[1] } : neuronsInLayers.ToArray());
+                neuronsInLayers.ToArray());
 
             teacher = new BackPropagationLearning(network) { LearningRate = learningRate, Momentum = momentum };
 
@@ -193,7 +193,7 @@ namespace MLP_approximation
                 break;
             }
             //////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+            totalConnections = network.Layers.Select(x => x.InputsCount * x.Neurons.Length).Sum();
             if (dynamicPruning) Pruning(input, output);
 
             TextWriter twError = new StreamWriter(_dir + "\\classification_error.csv");
@@ -398,22 +398,26 @@ namespace MLP_approximation
                     var trainingSetErrorPrune = new List<double>();
                     while (!needToStop)
                     {
-                        var error = teacher.RunEpoch(input, output)/samples;
+                        var error = teacher.RunEpoch(input, output) / samples;
                         trainingSetErrorPrune.Add(error);
                         iteration++;
-                        if ((iteration < iterations/10) && (error > trainError)) continue;
-                        if (iteration >= iterations/10 && error > trainError)
+                        if ((iteration < iterations / 10) && (error > trainError)) continue;
+                        if (iteration >= iterations / 10 && error > trainError)
                             keepPruning = false;
                         else
                         {
                             trainingSetError.AddRange(trainingSetErrorPrune);
                             pruned++;
                         }
-                    break;
+                        break;
                     }
                 }
             }
-            MessageBox.Show("Pruned " + pruned + " connections");
+            var percentage = ( Decimal.Parse(pruned.ToString()) / Decimal.Parse(totalConnections.ToString()) ).ToString("P", CultureInfo.InvariantCulture);
+            ///////////////////////////////////// MESSAGE BOX /////////////////////////////////////////////////////////////////////////////
+            MessageBox.Show("Pruned " + pruned + " out of " + totalConnections + " connections" + 
+                " ( " + percentage  + " ) in a total of: " + trainingSetError.Count + " iterations.");
+
             network = (ActivationNetwork)checkpoint;
         }
 
