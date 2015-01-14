@@ -54,6 +54,10 @@
             this.testButton = new System.Windows.Forms.Button();
             this.openFileDialogTest = new System.Windows.Forms.OpenFileDialog();
             this.loadTrainDataButton = new System.Windows.Forms.Button();
+            this.groupBox2 = new System.Windows.Forms.GroupBox();
+            this.radioBtnWines = new System.Windows.Forms.RadioButton();
+            this.radioBtnMnist = new System.Windows.Forms.RadioButton();
+            this.button1 = new System.Windows.Forms.Button();
             this.groupBox3.SuspendLayout();
             this.groupBox1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.gammaNumeric)).BeginInit();
@@ -63,6 +67,7 @@
             ((System.ComponentModel.ISupportInitialize)(this.iterationsBox)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.momentumBox)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.learningRateBox)).BeginInit();
+            this.groupBox2.SuspendLayout();
             this.SuspendLayout();
             // 
             // groupBox3
@@ -404,12 +409,57 @@
             this.loadTrainDataButton.UseVisualStyleBackColor = true;
             this.loadTrainDataButton.Click += new System.EventHandler(this.loadTrainingDataButton_Click);
             // 
+            // groupBox2
+            // 
+            this.groupBox2.Controls.Add(this.radioBtnMnist);
+            this.groupBox2.Controls.Add(this.radioBtnWines);
+            this.groupBox2.Location = new System.Drawing.Point(13, 13);
+            this.groupBox2.Name = "groupBox2";
+            this.groupBox2.Size = new System.Drawing.Size(179, 87);
+            this.groupBox2.TabIndex = 7;
+            this.groupBox2.TabStop = false;
+            this.groupBox2.Text = "Problem";
+            // 
+            // radioBtnWines
+            // 
+            this.radioBtnWines.AutoSize = true;
+            this.radioBtnWines.Checked = true;
+            this.radioBtnWines.Location = new System.Drawing.Point(6, 21);
+            this.radioBtnWines.Name = "radioBtnWines";
+            this.radioBtnWines.Size = new System.Drawing.Size(55, 17);
+            this.radioBtnWines.TabIndex = 0;
+            this.radioBtnWines.TabStop = true;
+            this.radioBtnWines.Text = "Wines";
+            this.radioBtnWines.UseVisualStyleBackColor = true;
+            // 
+            // radioBtnMnist
+            // 
+            this.radioBtnMnist.AutoSize = true;
+            this.radioBtnMnist.Location = new System.Drawing.Point(6, 47);
+            this.radioBtnMnist.Name = "radioBtnMnist";
+            this.radioBtnMnist.Size = new System.Drawing.Size(59, 17);
+            this.radioBtnMnist.TabIndex = 1;
+            this.radioBtnMnist.Text = "MNIST";
+            this.radioBtnMnist.UseVisualStyleBackColor = true;
+            // 
+            // button1
+            // 
+            this.button1.Location = new System.Drawing.Point(54, 245);
+            this.button1.Name = "button1";
+            this.button1.Size = new System.Drawing.Size(75, 23);
+            this.button1.TabIndex = 8;
+            this.button1.Text = "button1";
+            this.button1.UseVisualStyleBackColor = true;
+            this.button1.Click += new System.EventHandler(this.button1_Click);
+            // 
             // MainForm
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.BackColor = System.Drawing.SystemColors.Control;
             this.ClientSize = new System.Drawing.Size(417, 338);
+            this.Controls.Add(this.button1);
+            this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.loadTrainDataButton);
             this.Controls.Add(this.testButton);
             this.Controls.Add(this.loadTestDataButton);
@@ -432,6 +482,8 @@
             ((System.ComponentModel.ISupportInitialize)(this.iterationsBox)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.momentumBox)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.learningRateBox)).EndInit();
+            this.groupBox2.ResumeLayout(false);
+            this.groupBox2.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -464,6 +516,10 @@
         private System.Windows.Forms.Label label1;
         private System.Windows.Forms.GroupBox groupBox1;
         private System.Windows.Forms.CheckBox PruningChk;
+        private System.Windows.Forms.GroupBox groupBox2;
+        private System.Windows.Forms.RadioButton radioBtnMnist;
+        private System.Windows.Forms.RadioButton radioBtnWines;
+        private System.Windows.Forms.Button button1;
     }
 }
 

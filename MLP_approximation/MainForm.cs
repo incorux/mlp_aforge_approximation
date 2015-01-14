@@ -63,8 +63,9 @@ namespace MLP_approximation
                 reader.BaseStream.Position = 0;
                 reader.DiscardBufferedData();
 
-                // read maximum 20000 points
-                var tempData = new float[20000, numberOfInputs + 1];
+                // read maximum 60000 points
+                var maxPoints = 60000;
+                var tempData = new float[maxPoints, numberOfInputs + 1];
                 // prepare mins and maxes
                 mins = new float[numberOfInputs + 1];
                 mins.Populate(float.MaxValue);
@@ -72,7 +73,7 @@ namespace MLP_approximation
                 maxes.Populate(float.MinValue);
 
                 // read the data
-                while ((row < 20000) && ((str = reader.ReadLine()) != null))
+                while ((row < maxPoints) && ((str = reader.ReadLine()) != null))
                 {
                     var strs = str.Split(',');
 
@@ -397,20 +398,80 @@ namespace MLP_approximation
                     var trainingSetErrorPrune = new List<double>();
                     while (!needToStop)
                     {
-                        var error = teacher.RunEpoch(input, output) / samples;
+                        var error = teacher.RunEpoch(input, output)/samples;
                         trainingSetErrorPrune.Add(error);
                         iteration++;
-                        if ((iteration < iterations / 10) && (error > trainError)) continue;
-                        trainingSetError.AddRange(trainingSetErrorPrune);
-                        pruned++;
-                        if (iteration >= iterations / 10 && error > trainError)
+                        if ((iteration < iterations/10) && (error > trainError)) continue;
+                        if (iteration >= iterations/10 && error > trainError)
                             keepPruning = false;
-                        break;
+                        else
+                        {
+                            trainingSetError.AddRange(trainingSetErrorPrune);
+                            pruned++;
+                        }
+                    break;
                     }
                 }
             }
-            MessageBox.Show("Pruned" + pruned + " connections");
+            MessageBox.Show("Pruned " + pruned + " connections");
             network = (ActivationNetwork)checkpoint;
+        }
+
+        public static DigitImage[] LoadMnistData(string pixelFile, string labelFile)
+        {
+            byte[][] pixels = new byte[28][];
+            for (int i = 0; i < pixels.Length; ++i)
+                pixels[i] = new byte[28];
+            FileStream ifsPixels = new FileStream(pixelFile, FileMode.Open);
+            FileStream ifsLabels = new FileStream(labelFile, FileMode.Open);
+            BinaryReader brImages = new BinaryReader(ifsPixels);
+            BinaryReader brLabels = new BinaryReader(ifsLabels);
+            int magic1 = brImages.ReadInt32(); // stored as big endian
+            int imageCount = brImages.ReadInt32();
+            imageCount = ReverseBytes(imageCount);
+            DigitImage[] result = new DigitImage[imageCount];
+            int numRows = brImages.ReadInt32();
+            numRows = ReverseBytes(numRows);
+            int numCols = brImages.ReadInt32();
+            numCols = ReverseBytes(numCols);
+            int magic2 = brLabels.ReadInt32();
+            magic2 = ReverseBytes(magic2);
+            int numLabels = brLabels.ReadInt32();
+            numLabels = ReverseBytes(numLabels);
+            for (int di = 0; di < imageCount; ++di)
+            {
+                for (int i = 0; i < 28; ++i) // get 28x28 pixel values
+                {
+                    for (int j = 0; j < 28; ++j)
+                    {
+                        byte b = brImages.ReadByte();
+                        pixels[i][j] = b;
+                    }
+                }
+                byte lbl = brLabels.ReadByte(); // get the label
+                DigitImage dImage = new DigitImage(28, 28, pixels, lbl);
+                result[di] = dImage;
+            } // Each image
+            ifsPixels.Close();
+            brImages.Close();
+            ifsLabels.Close();
+            brLabels.Close();
+            return result;
+        }
+
+        public static int ReverseBytes(int v)
+        {
+            byte[] intAsBytes = BitConverter.GetBytes(v);
+            Array.Reverse(intAsBytes);
+            return BitConverter.ToInt32(intAsBytes, 0);
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            string pixelFile = @"C:\Users\Pawel\Documents\code\train-images.idx3-ubyte";
+            string labelFile = @"C:\Users\Pawel\Documents\code\train-labels.idx1-ubyte";
+            DigitImage[] trainImages = null;
+            trainImages = LoadMnistData(pixelFile, labelFile);
         }
     }
 }
