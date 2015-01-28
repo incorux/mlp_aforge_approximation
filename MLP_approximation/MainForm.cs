@@ -1,4 +1,5 @@
-﻿using System.Runtime.Serialization.Formatters.Binary;
+﻿using System.Diagnostics;
+using System.Runtime.Serialization.Formatters.Binary;
 using AForge.Neuro;
 using AForge.Neuro.Learning;
 using System;
@@ -19,6 +20,7 @@ namespace MLP_approximation
         private int iterations;
         private double[,] trainData;
         private double[,] testData;
+        private double[] testAnswers;
         private float[] mins;
         private float[] maxes;
         private double[] factors;
@@ -32,12 +34,15 @@ namespace MLP_approximation
         private readonly string _dir = Directory.GetCurrentDirectory();
         private NumberStyles style = NumberStyles.Number;
         private CultureInfo culture = CultureInfo.InvariantCulture;
-        private int numberOfInputs, numberOfOutputs, gamma, elapsedIterations, totalConnections;
+        private int numberOfInputs, numberOfOutputs, gamma, elapsedIterations;
         private bool dynamicAdding, dynamicPruning;
         private float eps;
+        private List<Raport> raports = new List<Raport>();
+        private int totalConnections;
         public MainForm()
         {
             InitializeComponent();
+            transferFunction = "bipolar";
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -56,16 +61,10 @@ namespace MLP_approximation
             try
             {
                 reader = File.OpenText(openFileDialogTrain.FileName);
-                string str;
                 var row = 0;
                 numberOfInputs = reader.ReadLine().Split(',').Length - 1;
                 factors = new double[numberOfInputs + 1];
-                reader.BaseStream.Position = 0;
-                reader.DiscardBufferedData();
 
-                // read maximum 60000 points
-                var maxPoints = 60000;
-                var tempData = new float[maxPoints, numberOfInputs + 1];
                 // prepare mins and maxes
                 mins = new float[numberOfInputs + 1];
                 mins.Populate(float.MaxValue);
@@ -73,6 +72,10 @@ namespace MLP_approximation
                 maxes.Populate(float.MinValue);
 
                 // read the data
+                // read maximum 20000 points
+                const int maxPoints = 20000;
+                var tempData = new float[maxPoints, numberOfInputs + 1];
+                string str;
                 while ((row < maxPoints) && ((str = reader.ReadLine()) != null))
                 {
                     var strs = str.Split(',');
@@ -95,8 +98,6 @@ namespace MLP_approximation
                     }
                     row++;
                 }
-
-                // allocate and set data
                 trainData = new double[row, numberOfInputs + 1];
                 Array.Copy(tempData, 0, trainData, 0, row * (numberOfInputs + 1));
                 MessageBox.Show("Training data loaded");
@@ -117,29 +118,38 @@ namespace MLP_approximation
 
         private void trainButton_Click(object sender, EventArgs e)
         {
-            learningRate = (double)learningRateBox.Value;
-            momentum = (double)momentumBox.Value;
-            // add hidden layers
-            var neuronsStrings = neuronsBox.Text.Split(' ');
-            neuronsInLayers = new List<int>(neuronsStrings.Length);
-            foreach (String neuronString in neuronsStrings)
+            var sw = new Stopwatch();
+            sw.Start();
+            for (int i = 0; i < 10; i++)
             {
-                neuronsInLayers.Add(Int32.Parse(neuronString));
+                learningRate = (double)learningRateBox.Value;
+                momentum = (double)momentumBox.Value;
+                // add hidden layers
+                var neuronsStrings = neuronsBox.Text.Split(' ');
+                neuronsInLayers = new List<int>(neuronsStrings.Length);
+                foreach (String neuronString in neuronsStrings)
+                {
+                    neuronsInLayers.Add(Int32.Parse(neuronString));
+                }
+                // add output neurons
+                numberOfOutputs = (int)outputNumericUpDown.Value;
+                neuronsInLayers.Add(numberOfOutputs);
+                iterations = (int)iterationsBox.Value;
+                sigmoidAlphaValue = (double)sigmaNumericUpDown.Value;
+                eps = (float)epsNumeric.Value;
+                gamma = (int)gammaNumeric.Value;
+                // run worker thread
+                needToStop = false;
+                workerThread = new Thread(SearchSolution);
+                workerThread.Start();
+                workerThread.Join();
+                //MessageBox.Show("Network trained, iterations:" + elapsedIterations + ", final training error: " + trainingSetError.Last());
+                loadTestDataButton.Enabled = true;
+                while (workerThread.IsAlive) { }
+                loadTestDataButton_Click(null, null);
+                testButton_Click(null, null);
             }
-            // add output neurons
-            numberOfOutputs = (int)outputNumericUpDown.Value;
-            neuronsInLayers.Add(numberOfOutputs);
-            iterations = (int)iterationsBox.Value;
-            sigmoidAlphaValue = (double)sigmaNumericUpDown.Value;
-            eps = (float)epsNumeric.Value;
-            gamma = (int)gammaNumeric.Value;
-            // run worker thread
-            needToStop = false;
-            workerThread = new Thread(SearchSolution);
-            workerThread.Start();
-            workerThread.Join();
-            MessageBox.Show("Network trained, iterations:" + elapsedIterations);
-            loadTestDataButton.Enabled = true;
+            sw.Stop();
         }
 
         // Worker thread
@@ -151,7 +161,8 @@ namespace MLP_approximation
             const int numerator = 2;
             for (var i = 0; i <= numberOfInputs; i++)
             {
-                factors[i] = numerator / (maxes[i] - mins[i]);
+                var factor = numerator / (maxes[i] - mins[i]);
+                factors[i] = float.IsPositiveInfinity(factor) || float.IsNegativeInfinity(factor) ? 1 : numerator / (maxes[i] - mins[i]);
             }
 
             var input = new double[samples][];
@@ -230,7 +241,10 @@ namespace MLP_approximation
                 int low = (transferFunction == "bipolar") ? -1 : 0;
                 Populator.Populate<double>(result, low);
                 int cls = (int)trainData[sample, numberOfInputs];
-                result[cls - 1] = 1;
+                if (radioBtnMnist.Checked)
+                    result[cls] = 1; // classes begin at "0"
+                else
+                    result[cls - 1] = 1; // classes begin at "1"
                 return result;
             }
         }
@@ -249,14 +263,13 @@ namespace MLP_approximation
 
         private void loadTestDataButton_Click(object sender, EventArgs e)
         {
-            if (openFileDialogTest.ShowDialog() != DialogResult.OK) return;
             StreamReader reader = null;
             // read maximum 20000 points
-            float[,] tempData = new float[20000, numberOfInputs];
-
+            var tempData = new float[20000, numberOfInputs];
+            testAnswers = new double[20000];
             try
             {
-                reader = File.OpenText(openFileDialogTest.FileName);
+                reader = File.OpenText("C:\\Users\\Adrian\\Desktop\\mlp_aforge_approximation_obd\\TestData.csv");
                 string str;
                 int samples = 0;
 
@@ -266,17 +279,21 @@ namespace MLP_approximation
                     var strs = str.Split(',');
                     // parse 1st input and skip header if necessary
                     if (!float.TryParse(strs[0], style, culture, out tempData[samples, 0])) continue;
-                    for (int input = 1; input < numberOfInputs; input++)
+
+                    var input = 1;
+                    for (; input < numberOfInputs; input++)
                     {
                         tempData[samples, input] = float.Parse(strs[input], culture);
                     }
+                    if (radioBtnMnist.Checked)
+                        testAnswers[samples] = float.Parse(strs[input], culture);
                     samples++;
                 }
 
                 // allocate and set data
                 testData = new double[samples, numberOfInputs];
                 Array.Copy(tempData, 0, testData, 0, samples * numberOfInputs);
-                MessageBox.Show("Test data loaded");
+                //MessageBox.Show("Test data loaded");
             }
             catch (Exception)
             {
@@ -319,24 +336,31 @@ namespace MLP_approximation
                 }
 
                 // denormalize
-                solution[sample, numberOfInputs] = denormalize(network.Compute(input[sample]));
+                solution[sample, numberOfInputs] = denormalize(network.Compute(input[sample])) - 1;
             }
 
             // create a writer and open the file
             TextWriter twSolution = new StreamWriter(_dir + "\\classification_output.csv");
             var nfi = new NumberFormatInfo { NumberDecimalSeparator = "." };
+            var errors = 0;
             for (int sample = 0; sample < samples; sample++)
             {
-                for (int i = 0; i < numberOfInputs; i++)
-                {
-                    twSolution.Write(solution[sample, i].ToString(nfi) + ",");
-                }
                 twSolution.Write(solution[sample, numberOfInputs].ToString(nfi));
+                twSolution.Write(" = ");
+                twSolution.Write(testAnswers[sample]);
+                if (radioBtnMnist.Checked && Math.Abs(testAnswers[sample] - solution[sample, numberOfInputs]) > 0.1)
+                {
+                    twSolution.Write(" ERROR");
+                    errors++;
+                }
                 twSolution.WriteLine();
             }
             twSolution.Close();
             network.Save(_dir + "\\network");
-            MessageBox.Show("Tested");
+            //MessageBox.Show("Tested, errors: " + errors);
+            if (!PruningChk.Checked)
+                raports.Add(new Raport { connections = totalConnections, iterations = iterations, error = trainingSetError.Last() });
+            raports.Last().Testerror = errors;
         }
 
         private List<int> PeriodicAdd(int gamma)
@@ -344,7 +368,8 @@ namespace MLP_approximation
             var periods = new List<int> { 0 };
             for (var i = 1; periods.Last() < iterations; i++)
             {
-                periods.Add((int)Math.Pow(gamma + 1, i - 1));
+                //periods.Add((int)Math.Pow(gamma + 1, i - 1));
+                periods.Add((int)Math.Pow(i, gamma));
             }
             return periods;
         }
@@ -367,33 +392,62 @@ namespace MLP_approximation
             var pruned = 0;
             while (keepPruning)
             {
-                var trainError = trainingSetError.Last();
                 using (var clonestream = new MemoryStream())
                 {
+                    var trainError = trainingSetError.Last();
                     var formatter = new BinaryFormatter();
                     formatter.Serialize(clonestream, network);
                     clonestream.Position = 0;
                     checkpoint = (Network)formatter.Deserialize(clonestream);
 
-                    var min = network.Layers.SelectMany(x => x.neurons).SelectMany(x => x.weights).Select(Math.Abs).Max();
+                    var min = Double.PositiveInfinity;
                     var minpos = new[] { 0, 0, 0 };
+                    var originalPruning = true;
+                    var minRatio = network.Layers.SelectMany(x => x.neurons).Min(y => y.minRatio());
+                    if (minRatio <= 0.3)
+                    {
+                        originalPruning = false;
+                    }
+                    else
+                    {
+                        keepPruning = false;
+                    }
+                    originalPruning = true;
                     for (var i = 0; i < network.Layers.Length; i++)
                     {
                         var layer = network.Layers[i];
                         for (var j = 0; j < layer.neurons.Length; j++)
                         {
                             var neuron = layer.neurons[j];
-                            for (var k = 0; k < neuron.weights.Length; k++)
+
+                            if (originalPruning)
                             {
-                                var weight = neuron.weights[k];
-                                if (neuron.freezes[k] == 0 || Math.Abs(min) < Math.Abs(weight)) continue;
-                                min = weight;
-                                minpos = new[] { i, j, k };
+                                for (var k = 0; k < neuron.weights.Length; k++)
+                                {
+                                    var weight = neuron.weights[k];
+                                    if (neuron.freezes[k] == 0 || Math.Abs(min) < Math.Abs(weight)) continue;
+                                    min = weight;
+                                    minpos = new[] { i, j, k };
+                                }
+                            }
+                            else
+                            {
+                                var ratio = neuron.minRatio();
+                                if (ratio > min) continue;
+                                min = ratio;
+                                minpos = new[] { i, j };
                             }
                         }
                     }
-                    var minneuron = network.Layers[minpos[0]].neurons[minpos[1]];
-                    minneuron.Freeze(minpos[2]);
+                    if (originalPruning)
+                    {
+                        var minneuron = network.Layers[minpos[0]].neurons[minpos[1]];
+                        minneuron.Freeze(minpos[2]);
+                    }
+                    else
+                    {
+                        network.Layers[minpos[0]].neurons[minpos[1]].FreezeMinRatio();
+                    }
                     var iteration = 1;
                     var trainingSetErrorPrune = new List<double>();
                     while (!needToStop)
@@ -413,11 +467,11 @@ namespace MLP_approximation
                     }
                 }
             }
-            var percentage = ( Decimal.Parse(pruned.ToString()) / Decimal.Parse(totalConnections.ToString()) ).ToString("P", CultureInfo.InvariantCulture);
+            var percentage = (Decimal.Parse(pruned.ToString()) / Decimal.Parse(totalConnections.ToString())).ToString("P", CultureInfo.InvariantCulture);
             ///////////////////////////////////// MESSAGE BOX /////////////////////////////////////////////////////////////////////////////
-            MessageBox.Show("Pruned " + pruned + " out of " + totalConnections + " connections" + 
-                " ( " + percentage  + " ) in a total of: " + trainingSetError.Count + " iterations.");
-
+            /*                        MessageBox.Show("Pruned " + pruned + " out of " + totalConnections + " connections" +
+                                        " ( " + percentage + " ) in a total of: " + trainingSetError.Count + " iterations.");*/
+            raports.Add(new Raport { connections = totalConnections, error = trainingSetError.Last(), iterations = trainingSetError.Count, pruned = pruned });
             network = (ActivationNetwork)checkpoint;
         }
 
@@ -472,8 +526,9 @@ namespace MLP_approximation
 
         private void button1_Click(object sender, EventArgs e)
         {
-            string pixelFile = @"C:\Users\Pawel\Documents\code\train-images.idx3-ubyte";
-            string labelFile = @"C:\Users\Pawel\Documents\code\train-labels.idx1-ubyte";
+            var dir = Directory.GetCurrentDirectory();
+            string pixelFile = dir + "\\train-images.idx3-ubyte";
+            string labelFile = dir + "\\train-labels.idx1-ubyte";
             DigitImage[] trainImages = null;
             trainImages = LoadMnistData(pixelFile, labelFile);
         }
