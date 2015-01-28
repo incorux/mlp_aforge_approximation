@@ -359,7 +359,7 @@ namespace MLP_approximation
             network.Save(_dir + "\\network");
             //MessageBox.Show("Tested, errors: " + errors);
             if (!PruningChk.Checked)
-                raports.Add(new Raport { connections = totalConnections, iterations = iterations, error = trainingSetError.Last() });
+                raports.Add(new Raport { connections = totalConnections, iterations = iterations, error = trainingSetError.Last(), Testerror = errors });
             raports.Last().Testerror = errors;
         }
 
